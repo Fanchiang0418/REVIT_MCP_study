@@ -423,6 +423,36 @@ namespace RevitMCP.Core
                     case "check_smoke_exhaust_windows":
                         result = CheckSmokeExhaustWindows(parameters);
                         break;
+
+                    case "plan_smoke_exhaust_window_plan":
+                        result = PlanSmokeExhaustWindowPlan(parameters);
+                        break;
+
+                    case "apply_smoke_exhaust_window_plan":
+                        result = ApplySmokeExhaustWindowPlan(parameters);
+                        break;
+
+                    case "undo_smoke_exhaust_window_plan":
+                        result = UndoSmokeExhaustWindowPlan(parameters);
+                        break;
+                    case "plan_smoke_exhaust_window_retrofit":
+                        result = PlanSmokeExhaustWindowRetrofit(parameters);
+                        break;
+                    case "apply_smoke_exhaust_window_retrofit":
+                        result = ApplySmokeExhaustWindowRetrofit(parameters);
+                        break;
+                    case "undo_smoke_exhaust_window_retrofit":
+                        result = UndoSmokeExhaustWindowRetrofit(parameters);
+                        break;
+                    case "plan_smoke_exhaust_window_replacement":
+                        result = PlanSmokeExhaustWindowReplacement(parameters);
+                        break;
+                    case "apply_smoke_exhaust_window_replacement":
+                        result = ApplySmokeExhaustWindowReplacement(parameters);
+                        break;
+                    case "undo_smoke_exhaust_window_replacement":
+                        result = UndoSmokeExhaustWindowReplacement(parameters);
+                        break;
                     case "check_floor_effective_openings":
                         result = CheckFloorEffectiveOpenings(parameters);
                         break;
@@ -2298,6 +2328,58 @@ namespace RevitMCP.Core
             Parameter heightParam = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
             double height = heightParam != null ? heightParam.AsDouble() * 304.8 : 0;
 
+            Parameter baseConstraintParam = wall.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT);
+            ElementId baseConstraintId = baseConstraintParam?.AsElementId() ?? ElementId.InvalidElementId;
+            Level baseConstraintLevel = baseConstraintId != ElementId.InvalidElementId
+                ? doc.GetElement(baseConstraintId) as Level
+                : null;
+            Level wallLevel = doc.GetElement(wall.LevelId) as Level;
+            Level resolvedBaseLevel = baseConstraintLevel ?? wallLevel;
+            Parameter baseOffsetParam = wall.get_Parameter(BuiltInParameter.WALL_BASE_OFFSET);
+            double baseOffsetFeet = baseOffsetParam?.AsDouble() ?? 0.0;
+            double? baseElevationFeet = resolvedBaseLevel != null
+                ? (double?)(resolvedBaseLevel.Elevation + baseOffsetFeet)
+                : null;
+
+            Parameter topConstraintParam = wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE);
+            ElementId topConstraintId = topConstraintParam?.AsElementId() ?? ElementId.InvalidElementId;
+            Level topConstraintLevel = topConstraintId != ElementId.InvalidElementId
+                ? doc.GetElement(topConstraintId) as Level
+                : null;
+            Parameter topOffsetParam = wall.get_Parameter(BuiltInParameter.WALL_TOP_OFFSET);
+            double topOffsetFeet = topOffsetParam?.AsDouble() ?? 0.0;
+            double? unconnectedHeightFeet = heightParam != null && heightParam.HasValue
+                ? (double?)(heightParam.AsDouble())
+                : null;
+
+            BoundingBoxXYZ boundingBox = wall.get_BoundingBox(null);
+            double? boundingBoxMinZMm = boundingBox != null ? (double?)(boundingBox.Min.Z * 304.8) : null;
+            double? boundingBoxMaxZMm = boundingBox != null ? (double?)(boundingBox.Max.Z * 304.8) : null;
+
+            double? topElevationFeet = null;
+            if (topConstraintLevel != null)
+            {
+                topElevationFeet = topConstraintLevel.Elevation + topOffsetFeet;
+            }
+            else if (baseElevationFeet.HasValue && unconnectedHeightFeet.HasValue)
+            {
+                topElevationFeet = baseElevationFeet.Value + unconnectedHeightFeet.Value;
+            }
+            else if (boundingBox != null)
+            {
+                topElevationFeet = boundingBox.Max.Z;
+            }
+
+            object baseConstraintIdValue = baseConstraintId != ElementId.InvalidElementId
+                ? (object)baseConstraintId.GetIdValue()
+                : null;
+            object topConstraintIdValue = topConstraintId != ElementId.InvalidElementId
+                ? (object)topConstraintId.GetIdValue()
+                : null;
+            string baseConstraintName = baseConstraintLevel?.Name ?? baseConstraintParam?.AsValueString();
+            string topConstraintName = topConstraintLevel?.Name
+                ?? (topConstraintId == ElementId.InvalidElementId ? "Unconnected" : topConstraintParam?.AsValueString());
+
             // Stage 3.5：補 Wall.Flipped + Wall.Orientation 兩個 native property
             // Wall.Flipped = bool（是否被 flip 過）
             // Wall.Orientation = XYZ 單位向量，指向 exterior side
@@ -2314,6 +2396,17 @@ namespace RevitMCP.Core
                 EndX = Math.Round(endPoint.X * 304.8, 2),
                 EndY = Math.Round(endPoint.Y * 304.8, 2),
                 Level = doc.GetElement(wall.LevelId)?.Name,
+                BaseConstraintName = baseConstraintName,
+                BaseConstraintId = baseConstraintIdValue,
+                BaseOffsetMm = Math.Round(baseOffsetFeet * 304.8, 2),
+                BaseElevationMm = baseElevationFeet.HasValue ? (double?)Math.Round(baseElevationFeet.Value * 304.8, 2) : null,
+                TopConstraintName = topConstraintName,
+                TopConstraintId = topConstraintIdValue,
+                TopOffsetMm = Math.Round(topOffsetFeet * 304.8, 2),
+                TopElevationMm = topElevationFeet.HasValue ? (double?)Math.Round(topElevationFeet.Value * 304.8, 2) : null,
+                UnconnectedHeightMm = unconnectedHeightFeet.HasValue ? (double?)Math.Round(unconnectedHeightFeet.Value * 304.8, 2) : null,
+                BoundingBoxMinZMm = boundingBoxMinZMm.HasValue ? (double?)Math.Round(boundingBoxMinZMm.Value, 2) : null,
+                BoundingBoxMaxZMm = boundingBoxMaxZMm.HasValue ? (double?)Math.Round(boundingBoxMaxZMm.Value, 2) : null,
                 Flipped = wall.Flipped,
                 OrientationX = Math.Round(wall.Orientation.X, 4),
                 OrientationY = Math.Round(wall.Orientation.Y, 4)

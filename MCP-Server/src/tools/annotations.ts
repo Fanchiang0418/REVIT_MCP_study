@@ -95,6 +95,15 @@ type ClassificationHints = Pick<ToolAnnotations, "readOnlyHint" | "destructiveHi
  *     前綴規則會判它 readOnlyHint=true，那是錯的宣稱 → 明確覆寫為寫入型。
  */
 export const OVERRIDE: Record<string, ClassificationHints> = {
+    plan_smoke_exhaust_window_plan: { readOnlyHint: true, destructiveHint: false },
+    apply_smoke_exhaust_window_plan: { readOnlyHint: false, destructiveHint: false },
+    undo_smoke_exhaust_window_plan: { readOnlyHint: false, destructiveHint: false },
+    plan_smoke_exhaust_window_retrofit: { readOnlyHint: true, destructiveHint: false },
+    apply_smoke_exhaust_window_retrofit: { readOnlyHint: false, destructiveHint: false },
+    undo_smoke_exhaust_window_retrofit: { readOnlyHint: false, destructiveHint: false },
+    plan_smoke_exhaust_window_replacement: { readOnlyHint: true, destructiveHint: false },
+    apply_smoke_exhaust_window_replacement: { readOnlyHint: false, destructiveHint: false },
+    undo_smoke_exhaust_window_replacement: { readOnlyHint: false, destructiveHint: false },
     export_families: { readOnlyHint: true, destructiveHint: false },
     export_clash_report: { readOnlyHint: true, destructiveHint: false },
     export_smoke_review_excel: { readOnlyHint: true, destructiveHint: false },

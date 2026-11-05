@@ -8,6 +8,113 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export const smokeExhaustTools: Tool[] = [
     {
+        name: "plan_smoke_exhaust_window_plan",
+        description: "Read only: finds up to the requested number of legal candidate placements on the selected Room's largest outer boundary loop, prioritizing exterior Walls and avoiding existing Windows and boundary ends. Stores a plan only when every requested placement is found.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                roomId: { type: "number", description: "Selected Revit Room ElementId" },
+                windowType: { type: "string", description: "Exact Window type name, preferably FamilyName: TypeName" },
+                count: { type: "integer", minimum: 1, description: "Requested number of new Windows; at least 1" },
+                sillHeightMm: { type: "number", description: "Window sill height above the Room level, in millimeters" },
+                widthMm: { type: "number", description: "Candidate Width in mm; must match the Revit type if provided" },
+                heightMm: { type: "number", description: "Candidate Height in mm; must match the Revit type if provided" },
+            },
+            required: ["roomId", "windowType", "count", "sillHeightMm"],
+        },
+    },
+    {
+        name: "apply_smoke_exhaust_window_plan",
+        description: "Creates all Windows from a stored smoke exhaust plan in one Revit transaction. A failed placement rolls back the complete plan.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                planId: { type: "string", description: "PlanId returned by plan_smoke_exhaust_window_plan" },
+                roomId: { type: "number", description: "Required only when supplying placements directly" },
+                windowType: { type: "string", description: "Required only when supplying placements directly" },
+                placements: {
+                    type: "array",
+                    description: "Optional complete placements; supply at least one when planId is omitted",
+                    items: {
+                        type: "object",
+                        properties: {
+                            hostWallId: { type: "number" }, locationX: { type: "number" }, locationY: { type: "number" },
+                            sillHeightMm: { type: "number" }, widthMm: { type: "number" }, heightMm: { type: "number" },
+                        },
+                        required: ["hostWallId", "locationX", "locationY", "sillHeightMm", "widthMm", "heightMm"],
+                    },
+                },
+            },
+        },
+    },
+    {
+        name: "undo_smoke_exhaust_window_plan",
+        description: "Reverses one successful smoke exhaust Window plan by deleting only its recorded Window ElementIds in one Revit transaction.",
+        inputSchema: {
+            type: "object",
+            properties: { operationId: { type: "string", description: "OperationId returned by apply_smoke_exhaust_window_plan" } },
+            required: ["operationId"],
+        },
+    },
+    {
+        name: "plan_smoke_exhaust_window_retrofit",
+        description: "Read only: simulates creating or reusing a larger Type within the two existing Windows' current Family, then changing their Type and Sill Height without moving or rehosting them. Returns a ProposedTypeSpec, original/proposed snapshots, checker-rounded opening areas, ceiling validation, and an applyable PASS plan.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                roomId: { type: "number", description: "Selected Revit Room ElementId" },
+                targetWindowIds: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Exactly two existing Window ElementIds belonging to the Room" },
+                targetWindowType: { type: "string", description: "Proposed same-Family Window type name, preferably FamilyName: TypeName; the type may not yet exist" },
+                targetWidthMm: { type: "number", description: "Proposed same-Family Type Width in millimeters" },
+                targetHeightMm: { type: "number", description: "Proposed same-Family Type Height in millimeters" },
+                targetSillHeightMm: { type: "number", description: "Proposed Window sill height above the Room level in millimeters" },
+            },
+            required: ["roomId", "targetWindowIds", "targetWindowType", "targetWidthMm", "targetHeightMm", "targetSillHeightMm"],
+        },
+    },
+    {
+        name: "apply_smoke_exhaust_window_retrofit",
+        description: "Applies a validated PASS plan in one Revit transaction, duplicating the source Window FamilySymbol when needed, setting only the duplicate's Width/Height, and changing exactly two existing Windows. Preserves each ElementId, Host Wall, XY, Window Inset value/global associations, and facing/hand; any failure rolls back all model changes.",
+        inputSchema: {
+            type: "object",
+            properties: { planId: { type: "string", description: "PlanId returned by plan_smoke_exhaust_window_retrofit" } },
+            required: ["planId"],
+        },
+    },
+    {
+        name: "undo_smoke_exhaust_window_retrofit",
+        description: "Restores the original Type and Sill Height of two retrofitted Windows in one Revit transaction without deleting or rehosting them. Deletes the operation-created Type only when no FamilyInstances use it; otherwise retains it. Rechecks the original Room result.",
+        inputSchema: {
+            type: "object",
+            properties: { operationId: { type: "string", description: "OperationId returned by apply_smoke_exhaust_window_retrofit" } },
+            required: ["operationId"],
+        },
+    },
+    {
+        name: "plan_smoke_exhaust_window_replacement",
+        description: "Read only: selects fixed Room Windows by host geometry and spacing, snapshots instance/global-parameter state, checks target-family parameter compatibility, and predicts checker effective area. Stores a short-lived plan only.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                roomId: { type: "number" },
+                targetWindowType: { type: "string", description: "Loaded Window Family: Type name" },
+                targetSillHeightMm: { type: "number" },
+                requiredCount: { type: "integer", minimum: 1 },
+            },
+            required: ["roomId", "targetWindowType", "targetSillHeightMm", "requiredCount"],
+        },
+    },
+    {
+        name: "apply_smoke_exhaust_window_replacement",
+        description: "Atomically replaces the planned fixed Windows without cross-Family ChangeTypeId. Only a ReplacementSafe PASS plan can be applied; checker revalidation is part of the transaction.",
+        inputSchema: { type: "object", properties: { planId: { type: "string" } }, required: ["planId"] },
+    },
+    {
+        name: "undo_smoke_exhaust_window_replacement",
+        description: "Atomically removes replacement Windows and recreates the original Family Types, hosts, locations, parameters, orientations, and global-parameter associations from the operation snapshot.",
+        inputSchema: { type: "object", properties: { operationId: { type: "string" } }, required: ["operationId"] },
+    },
+    {
         name: "check_smoke_exhaust_windows",
         description: "排煙窗檢討：檢查天花板下 80cm 內可開啟窗面積是否 ≥ 區劃面積 2%。同時判定無窗居室。法源：建技規§101① + 消防§188。自動上色：綠=全開、黃=折減、紅=固定。",
         inputSchema: {

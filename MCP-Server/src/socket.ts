@@ -39,6 +39,8 @@ export class RevitSocketClient {
     private port: number = DEFAULT_PORT;
     private reconnectInterval: number = 5000; // 5 seconds
     private responseHandlers: Map<string, (response: RevitResponse) => void> = new Map();
+    /** Keep Revit commands sequential when MCP and browser callers arrive together. */
+    private commandQueue: Promise<void> = Promise.resolve();
 
     /**
      * 單一重連 timer。每個 'close' 事件各自呼叫 setTimeout 會讓 timer 累積，
@@ -209,6 +211,12 @@ export class RevitSocketClient {
      * Send command to Revit
      */
     async sendCommand(commandName: string, parameters: Record<string, any> = {}, timeoutMs: number = 30000): Promise<RevitResponse> {
+        const result = this.commandQueue.then(() => this.sendCommandNow(commandName, parameters, timeoutMs));
+        this.commandQueue = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
+    private async sendCommandNow(commandName: string, parameters: Record<string, any>, timeoutMs: number): Promise<RevitResponse> {
         if (!this.isConnected()) {
             throw new Error('Not connected to Revit Plugin');
         }

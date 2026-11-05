@@ -251,12 +251,16 @@ namespace RevitMCP.Core
                 double ceilingHeight = GetCeilingHeight(doc, room, ceilingHeightSource);
                 roomCeilingHeights.Add(ceilingHeight);
 
+                // Use the Room's model-space vertical extent to reject windows on
+                // a boundary wall that belong to another storey.
+                BoundingBoxXYZ roomBounds = room.get_BoundingBox(null);
+
                 // 計算有效帶範圍（相對於樓層地板）
                 double smokeZoneTop = ceilingHeight;
                 double smokeZoneBottom = ceilingHeight - smokeZoneHeight;
 
                 // 找出房間邊界牆上的所有窗戶
-                var windowResults = new List<object>();
+                var windowResults = new List<Dictionary<string, object>>();
                 var processedWindowIds = new HashSet<IdType>();
                 bool hasConfirmNeeded = false;
 
@@ -292,9 +296,23 @@ namespace RevitMCP.Core
                                         fi.Category.Id.GetIdValue() == (IdType)(int)BuiltInCategory.OST_Windows)
                                     {
                                         // 確認窗戶屬於此房間（使用與 GetRoomDaylightInfo 相同的邏輯）
+                                        Room fromRoom = null;
+                                        Room toRoom = null;
+                                        bool roomRefsReadable = true;
+                                        try { fromRoom = fi.FromRoom; } catch { roomRefsReadable = false; }
+                                        try { toRoom = fi.ToRoom; } catch { roomRefsReadable = false; }
+
                                         bool belongsToRoom = false;
-                                        if (wall.Location is LocationCurve wallLocCurve && insert.Location is LocationPoint insertLoc)
+                                        // A populated FromRoom/ToRoom relation is authoritative. Do not
+                                        // geometrically reassign a window whose room relation names another room.
+                                        if (roomRefsReadable && (fromRoom != null || toRoom != null))
                                         {
+                                            belongsToRoom = (fromRoom != null && fromRoom.Id == room.Id) ||
+                                                            (toRoom != null && toRoom.Id == room.Id);
+                                        }
+                                        else if (wall.Location is LocationCurve wallLocCurve && insert.Location is LocationPoint insertLoc)
+                                        {
+                                            belongsToRoom = false;
                                             Curve wallCurve = wallLocCurve.Curve;
                                             Curve segmentCurve = segment.GetCurve();
                                             IntersectionResult resStart = wallCurve.Project(segmentCurve.GetEndPoint(0));
@@ -312,19 +330,13 @@ namespace RevitMCP.Core
                                                         belongsToRoom = true;
                                                 }
                                             }
-                                            else
-                                            {
-                                                if (fi.FromRoom != null && fi.FromRoom.Id == room.Id) belongsToRoom = true;
-                                                else if (fi.ToRoom != null && fi.ToRoom.Id == room.Id) belongsToRoom = true;
-                                            }
-                                        }
-                                        else
-                                        {
-                                            if (fi.FromRoom != null && fi.FromRoom.Id == room.Id) belongsToRoom = true;
-                                            else if (fi.ToRoom != null && fi.ToRoom.Id == room.Id) belongsToRoom = true;
                                         }
 
                                         if (!belongsToRoom) continue;
+                                        BoundingBoxXYZ windowBounds = insert.get_BoundingBox(null);
+                                        if (roomBounds == null || windowBounds == null ||
+                                            windowBounds.Max.Z <= roomBounds.Min.Z || windowBounds.Min.Z >= roomBounds.Max.Z)
+                                            continue;
                                         processedWindowIds.Add(insertId.GetIdValue());
 
                                         // 取得窗戶尺寸
@@ -379,32 +391,48 @@ namespace RevitMCP.Core
 
                                         double effectiveArea = areaInZone * openingRatio;
 
+                                        // LocationPoint coordinates are stored in Revit internal feet.
+                                        // Some family instances may use another Location subtype.
+                                        LocationPoint windowLocation = fi.Location as LocationPoint;
+                                        double? locationX = windowLocation != null
+                                            ? (double?)Math.Round(windowLocation.Point.X * FEET_TO_MM, 2)
+                                            : null;
+                                        double? locationY = windowLocation != null
+                                            ? (double?)Math.Round(windowLocation.Point.Y * FEET_TO_MM, 2)
+                                            : null;
+                                        double? locationZ = windowLocation != null
+                                            ? (double?)Math.Round(windowLocation.Point.Z * FEET_TO_MM, 2)
+                                            : null;
+
                                         // 收集上色資訊
                                         if (colorize)
                                         {
                                             colorizeList.Add((insertId.GetIdValue(), operationType));
                                         }
 
-                                        windowResults.Add(new
+                                        windowResults.Add(new Dictionary<string, object>
                                         {
-                                            WindowId = insertId.GetIdValue(),
-                                            FamilyName = fi.Symbol.FamilyName,
-                                            TypeName = fi.Symbol.Name,
-                                            Width = Math.Round(width, 1),
-                                            Height = Math.Round(height, 1),
-                                            SillHeight = Math.Round(sillHeight, 1),
-                                            HeadHeight = Math.Round(headHeight, 1),
-                                            HeadHeightCapped = Math.Round(headHeightCapped, 1),
-                                            IsInSmokeZone = isInSmokeZone,
-                                            HeightInZone = Math.Round(heightInZone, 1),
-                                            AreaInZone = Math.Round(areaInZone, 4),
-                                            OperationType = operationType,
-                                            OperationSource = "familyName",
-                                            OpeningRatio = openingRatio,
-                                            EffectiveArea = Math.Round(effectiveArea, 4),
-                                            NeedsManualConfirm = needsConfirm,
-                                            Note = note,
-                                            HostWallId = wall.Id.GetIdValue()
+                                            ["WindowId"] = insertId.GetIdValue(),
+                                            ["FamilyName"] = fi.Symbol.FamilyName,
+                                            ["TypeName"] = fi.Symbol.Name,
+                                            ["LocationX"] = locationX,
+                                            ["LocationY"] = locationY,
+                                            ["LocationZ"] = locationZ,
+                                            ["Width"] = Math.Round(width, 1),
+                                            ["Height"] = Math.Round(height, 1),
+                                            ["SillHeight"] = Math.Round(sillHeight, 1),
+                                            ["HeadHeight"] = Math.Round(headHeight, 1),
+                                            ["HeadHeightCapped"] = Math.Round(headHeightCapped, 1),
+                                            ["IsInSmokeZone"] = isInSmokeZone,
+                                            ["HeightInZone"] = Math.Round(heightInZone, 1),
+                                            ["AreaInZone"] = Math.Round(areaInZone, 4),
+                                            ["OperationType"] = operationType,
+                                            ["OperationSource"] = "familyName",
+                                            ["OpeningRatio"] = openingRatio,
+                                            ["EffectiveArea"] = Math.Round(effectiveArea, 4),
+                                            ["NeedsManualConfirm"] = needsConfirm,
+                                            ["Note"] = note,
+                                            ["HostWallId"] = wall.Id.GetIdValue()
                                         });
 
                                         // 更新平行追蹤變數
@@ -440,6 +468,41 @@ namespace RevitMCP.Core
                 bool isCompliant = totalEffectiveArea >= requiredArea;
                 double deficit = isCompliant ? 0 : requiredArea - totalEffectiveArea;
 
+                // Pure hypothetical scenarios: use the same rounded per-window effective areas
+                // that were accumulated into totalEffectiveArea above. This does not touch Revit.
+                foreach (var windowResult in windowResults)
+                {
+                    double scenarioAreaInZone = (double)windowResult["AreaInZone"];
+                    bool scenarioNeedsConfirm = (bool)windowResult["NeedsManualConfirm"];
+                    if (scenarioAreaInZone <= 0 || scenarioNeedsConfirm) continue;
+
+                    double currentEffectiveArea = (double)windowResult["EffectiveArea"];
+                    object BuildScenario(double scenarioOpeningRatio)
+                    {
+                        double scenarioEffectiveArea = Math.Round(scenarioAreaInZone * scenarioOpeningRatio, 4);
+                        double scenarioIncrease = Math.Round(scenarioEffectiveArea - currentEffectiveArea, 4);
+                        double scenarioTotalEffectiveArea = Math.Round(totalEffectiveArea - currentEffectiveArea + scenarioEffectiveArea, 4);
+                        bool scenarioIsCompliant = scenarioTotalEffectiveArea >= requiredArea;
+                        double scenarioDeficit = Math.Max(requiredArea - scenarioTotalEffectiveArea, 0);
+                        return new
+                        {
+                            OpeningRatio = scenarioOpeningRatio,
+                            EffectiveArea = scenarioEffectiveArea,
+                            Increase = scenarioIncrease,
+                            TotalEffectiveArea = scenarioTotalEffectiveArea,
+                            Deficit = Math.Round(scenarioDeficit, 4),
+                            IsCompliant = scenarioIsCompliant,
+                            Result = scenarioIsCompliant ? "PASS" : "FAIL"
+                        };
+                    }
+
+                    windowResult["Scenarios"] = new
+                    {
+                        FiftyPercent = BuildScenario(0.5),
+                        HundredPercent = BuildScenario(1.0)
+                    };
+                }
+
                 // 無窗居室判定（建技規§1第35款第三目）
                 bool isWindowlessRoom = totalEffectiveArea < requiredArea;
 
@@ -451,6 +514,7 @@ namespace RevitMCP.Core
                 if (!isCompliant)
                 {
                     double remainingDeficit = deficit;
+                    double typeAProjectedTotalEffectiveArea = Math.Round(totalEffectiveArea, 4);
 
                     // 建議 A：固定窗改為可開啟窗
                     if (fixedWindowsInZoneCount > 0)
@@ -480,16 +544,23 @@ namespace RevitMCP.Core
 
                         double totalPotentialGain = fixedWindowsInZonePotentialGain;
                         remainingDeficit -= totalPotentialGain;
+                        typeAProjectedTotalEffectiveArea = Math.Round(Math.Round(totalEffectiveArea, 4) + Math.Round(totalPotentialGain, 4), 4);
+                        bool projectedIsCompliant = typeAProjectedTotalEffectiveArea >= Math.Round(requiredArea, 4);
+                        double projectedDeficit = Math.Max(Math.Round(requiredArea, 4) - typeAProjectedTotalEffectiveArea, 0);
 
                         recommendations.Add(new
                         {
                             Type = "A",
                             Action = "將固定窗改為可開啟窗",
-                            PotentialGain = Math.Round(totalPotentialGain, 2),
+                            PotentialGain = Math.Round(totalPotentialGain, 4),
                             CanSolve = totalPotentialGain >= deficit,
                             FixedWindows = fixedWindowDetails,
                             AvailableCasementTypes = availableCasementTypes,
-                            Note = $"將 {fixedWindowsInZoneCount} 扇固定窗改為 Casement，可補足 +{Math.Round(totalPotentialGain, 2)} m²"
+                            ProjectedTotalEffectiveArea = typeAProjectedTotalEffectiveArea,
+                            ProjectedDeficit = Math.Round(projectedDeficit, 4),
+                            IsCompliant = projectedIsCompliant,
+                            Result = projectedIsCompliant ? "PASS" : "FAIL",
+                            Note = $"將 {fixedWindowsInZoneCount} 扇固定窗改為 Casement，可補足 +{Math.Round(totalPotentialGain, 4)} m²"
                         });
                     }
 
@@ -539,6 +610,13 @@ namespace RevitMCP.Core
                                 double wMm = (tw ?? 0) * FEET_TO_MM;
                                 double hMm = (th ?? 0) * FEET_TO_MM;
                                 var (_, ratioC, _, _) = GetWindowOperationType(fs.FamilyName, fs.Name);
+                                double effectiveAreaPerWindow = Math.Round((wMm / 1000.0) * Math.Min(hMm, smokeZoneHeight) / 1000.0 * ratioC, 4);
+                                double typeCRemainingDeficit = Math.Round(Math.Max(remainingDeficit, 0), 4);
+                                int requiredCount = effectiveAreaPerWindow > 0
+                                    ? (int)Math.Ceiling(typeCRemainingDeficit / effectiveAreaPerWindow)
+                                    : 0;
+                                double projectedTotal = Math.Round(typeAProjectedTotalEffectiveArea + requiredCount * effectiveAreaPerWindow, 4);
+                                bool projectedIsCompliant = projectedTotal >= Math.Round(requiredArea, 4);
                                 return new
                                 {
                                     TypeName = fs.FamilyName + ": " + fs.Name,
@@ -546,7 +624,12 @@ namespace RevitMCP.Core
                                     Width = Math.Round(wMm, 0),
                                     Height = Math.Round(hMm, 0),
                                     OpeningRatio = ratioC,
-                                    EffectiveAreaPerWindow = Math.Round((wMm / 1000.0) * Math.Min(hMm, smokeZoneHeight) / 1000.0 * ratioC, 4)
+                                    EffectiveAreaPerWindow = effectiveAreaPerWindow,
+                                    RequiredCount = requiredCount,
+                                    ProjectedTotalEffectiveArea = projectedTotal,
+                                    ProjectedDeficit = Math.Round(Math.Max(Math.Round(requiredArea, 4) - projectedTotal, 0), 4),
+                                    IsCompliant = projectedIsCompliant,
+                                    Result = projectedIsCompliant ? "PASS" : "FAIL"
                                 };
                             })
                             .Where(t => t.EffectiveAreaPerWindow > 0)
@@ -558,9 +641,9 @@ namespace RevitMCP.Core
                         {
                             Type = "C",
                             Action = "新增可開啟窗",
-                            RemainingDeficit = Math.Round(Math.Max(remainingDeficit, 0), 2),
+                            RemainingDeficit = Math.Round(Math.Max(remainingDeficit, 0), 4),
                             AvailableWindowTypes = availableTypes,
-                            Note = $"於天花板下 80cm 範圍內的外牆空白段新增可開啟窗，需補足 {Math.Round(Math.Max(remainingDeficit, 0), 2)} m²"
+                            Note = $"估算方案：假設於天花板下 80cm 範圍內的外牆空白段新增可開啟窗，需補足 {Math.Round(Math.Max(remainingDeficit, 0), 4)} m²；實際位置與可放置性仍需確認"
                         });
                     }
 
