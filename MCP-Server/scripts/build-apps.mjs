@@ -20,7 +20,7 @@ const appsOut = resolve(here, "../build/apps");
 const MARKER = "/*__APP_BUNDLE__*/";
 
 /** name = subfolder under src/apps/ that holds app.ts + template.html */
-const APPS = ["clash-viewer"];
+const APPS = ["clash-viewer", "smoke-exhaust-dashboard"];
 
 for (const name of APPS) {
   const entry = resolve(appsSrc, name, "app.ts");

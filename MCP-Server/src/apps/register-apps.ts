@@ -20,6 +20,7 @@ export const APP_RESOURCE_MIME = "text/html;profile=mcp-app";
 /** Tool name -> UI resource URI. Only tools listed here render an interactive App. */
 export const APP_TOOL_UI: Record<string, string> = {
   detect_clashes: "ui://clash-viewer/index.html",
+  get_all_levels: "ui://smoke-exhaust-dashboard/index.html",
 };
 
 interface AppResourceDef {
@@ -32,6 +33,10 @@ const APP_RESOURCES: Record<string, AppResourceDef> = {
   "ui://clash-viewer/index.html": {
     name: "Revit Clash Viewer",
     file: "./clash-viewer/index.html",
+  },
+  "ui://smoke-exhaust-dashboard/index.html": {
+    name: "AI 自然排煙開口檢核助手",
+    file: "./smoke-exhaust-dashboard/index.html",
   },
 };
 
